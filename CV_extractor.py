@@ -4,6 +4,56 @@ import pdfplumber
 import pandas as pd
 import streamlit as st
 
+def extract_header_info(file_bytes: bytes) -> dict:
+    """Extrait les informations d'en-tête de la page 1 du rapport PDF."""
+    
+    # Ordre voulu
+    header_fields = {
+        "Model": None,
+        "Serial No.": None,
+        "Nickname": None,
+        "Instrument Code": None,
+        "Control Material": None,
+        "Lot No. Level 1": None,
+        "Lot No. Level 2": None,
+        "Lot No. Level 3": None,
+        "Report Period": None
+    }
+
+    # Liste des champs pour le regex
+    field_names = list(header_fields.keys())
+
+    # Regex : capture "Field: valeur" jusqu'au prochain champ connu ou fin de texte
+    pattern = re.compile(
+        r'(' + '|'.join(re.escape(f) for f in field_names) + r')\s*:\s*(.*?)\s*(?=(?:' + '|'.join(re.escape(f) for f in field_names) + r')\s*:|$)',
+        re.DOTALL
+    )
+
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        if not pdf.pages:
+            return header_fields
+
+        text = pdf.pages[0].extract_text() or ""
+
+        # Stopper le texte après 'Report Period' si 'Accredited' suit
+        if "Accredited" in text:
+            text = text.split("Accredited")[0]
+
+        for match in pattern.finditer(text):
+            key = match.group(1)
+            value = match.group(2).strip().replace("_", " ")  # nettoyer les underscores
+            header_fields[key] = value
+
+    # Réordonner explicitement les Lot No.
+    ordered_lots = ["Lot No. Level 1", "Lot No. Level 2", "Lot No. Level 3"]
+    ordered_lots_values = [header_fields[k] for k in ordered_lots]
+    for k, v in zip(ordered_lots, ordered_lots_values):
+        header_fields[k] = v
+
+    return header_fields
+
+
+
 st.set_page_config(page_title="Extraction CV% PDF", page_icon="📊", layout="wide")
 
 st.title("📊 Extraction automatique des CV% depuis un PDF (XN-CHECK)")
@@ -33,8 +83,9 @@ def find_cv_in_tokens(tokens, raw_tokens):
 def extract_cv_from_pdf(file_bytes: bytes, start_page: int, end_page: int) -> pd.DataFrame:
     results = []
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        total_pages = len(pdf.pages)  # ✅ CORRECTION
         lines = []
-        for p_idx in range(start_page-1, min(end_page, len(pdf))):
+        for p_idx in range(start_page - 1, min(end_page, total_pages)):
             page = pdf.pages[p_idx]
             text = page.extract_text() or ""
             for li, l in enumerate(text.splitlines()):
@@ -82,23 +133,46 @@ def extract_cv_from_pdf(file_bytes: bytes, start_page: int, end_page: int) -> pd
     df = pd.DataFrame(results).drop_duplicates().reset_index(drop=True)
     return df
 
+
+
 # --- Traitement ---
 if uploaded_file is not None:
+    file_bytes = uploaded_file.read()  # Lire une seule fois
     st.info("📑 Traitement en cours...")
-    df = extract_cv_from_pdf(uploaded_file.read(), start_page, end_page)
 
-    if not df.empty:
-        st.success(f"{len(df)} enregistrements extraits ✅")
-        st.dataframe(df, use_container_width=True)
+    # --- Extraction CV ---
+    df_cv = extract_cv_from_pdf(file_bytes, start_page, end_page)
 
-        # Boutons de téléchargement
-        csv_bytes = df.to_csv(index=False, sep=';').encode('utf-8')
+    # --- Extraction header ---
+    header_info = extract_header_info(file_bytes)
+    df_header = pd.DataFrame(list(header_info.items()), columns=["Field", "Value"])
+
+    if not df_cv.empty:
+        st.success(f"{len(df_cv)} enregistrements extraits ✅")
+        st.dataframe(df_cv, use_container_width=True)
+
+        # --- Création Excel avec 2 feuilles ---
         xlsx_bytes = io.BytesIO()
-        df.to_excel(xlsx_bytes, index=False)
+        with pd.ExcelWriter(xlsx_bytes, engine="openpyxl") as writer:
+            df_cv.to_excel(writer, sheet_name="CV%", index=False)
+            df_header.to_excel(writer, sheet_name="Header Info", index=False)
         xlsx_bytes.seek(0)
+
+        # --- Boutons téléchargement ---
+        csv_bytes = df_cv.to_csv(index=False, sep=';').encode('utf-8')
 
         col1, col2 = st.columns(2)
         col1.download_button("💾 Télécharger CSV", csv_bytes, "extraction_cv.csv", "text/csv")
-        col2.download_button("📊 Télécharger Excel", xlsx_bytes, "extraction_cv.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        col2.download_button("📊 Télécharger Excel", xlsx_bytes, "extraction_cv.xlsx", 
+                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     else:
         st.warning("⚠️ Aucune donnée extraite sur la plage de pages spécifiée.")
+
+    # --- Extraction des métadonnées en-tête ---
+    header_info = extract_header_info(file_bytes)
+    st.subheader("🧾 Informations du rapport")
+    cols = st.columns(1)
+    items = list(header_info.items())
+    for i, (key, value) in enumerate(items):
+        col = cols[i % 1]
+        col.markdown(f"**{key}**: {value if value else '—'}")

@@ -3,6 +3,4 @@ panda
 numpy
 plotly.express
 openpyxl
-re
-io
 pdfplumber
