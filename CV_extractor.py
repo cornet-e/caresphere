@@ -56,7 +56,7 @@ def extract_header_info(file_bytes: bytes) -> dict:
 
 st.set_page_config(page_title="Extraction CV% PDF", page_icon="📊", layout="wide")
 
-st.title("📊 Extraction automatique des CV% depuis un PDF (XN-CHECK)")
+st.title("1️⃣ 📊 Extraction automatique des CV% depuis un PDF (XN-CHECK)")
 
 # --- Téléversement du fichier ---
 uploaded_file = st.file_uploader("Choisissez un fichier PDF", type=["pdf"])
@@ -176,3 +176,37 @@ if uploaded_file is not None:
     for i, (key, value) in enumerate(items):
         col = cols[i % 1]
         col.markdown(f"**{key}**: {value if value else '—'}")
+
+# --- Étape 2 optionnelle : comparaison avec CV référence ---
+    st.subheader("2️⃣ 📊 Comparaison optionnelle avec CV de référence")
+    ref_file = st.file_uploader("📁 Choisissez le fichier Excel des CV de référence", type=["xlsx"], key="ref")
+    
+    if ref_file is not None and not df_cv.empty:
+        df_ref = pd.read_excel(ref_file)
+        expected_cols = ["Parameter", "Level", "CV%"]
+        if not all(col in df_ref.columns for col in expected_cols):
+            st.error("Le fichier de référence doit contenir les colonnes : Parameter, Level, CV%")
+        else:
+            # Merge sur Parameter + Level
+            df_merged = df_cv.merge(df_ref, on=["Parameter", "Level"], suffixes=("", "_ref"))
+            
+            # Nouvelle colonne "Conformité"
+            df_merged["Conformité"] = df_merged.apply(lambda row: "Conforme" if row["CV%"] <= row["CV%_ref"] else "Non Conforme", axis=1)
+
+            # Surlignage rouge si Non Conforme
+            def highlight_exceed(s):
+                if s["Conformité"] == "Non Conforme":
+                    return ['background-color: red']*len(s)
+                else:
+                    return ['']*len(s)
+
+            st.dataframe(df_merged.style.apply(highlight_exceed, axis=1), use_container_width=True)
+
+            # Export Excel comparatif
+            xlsx_bytes2 = io.BytesIO()
+            with pd.ExcelWriter(xlsx_bytes2, engine="openpyxl") as writer:
+                df_merged.to_excel(writer, sheet_name="CV%", index=False)
+                df_header.to_excel(writer, sheet_name="Header Info", index=False)
+            xlsx_bytes2.seek(0)
+            st.download_button("📊 Télécharger Excel comparatif", xlsx_bytes2, "extraction_cv_comparatif.xlsx",
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
