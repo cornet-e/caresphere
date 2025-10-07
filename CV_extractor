@@ -1,0 +1,104 @@
+import re
+import io
+import pdfplumber
+import pandas as pd
+import streamlit as st
+
+st.set_page_config(page_title="Extraction CV% PDF", page_icon="📊", layout="wide")
+
+st.title("📊 Extraction automatique des CV% depuis un PDF (XN-CHECK)")
+
+# --- Téléversement du fichier ---
+uploaded_file = st.file_uploader("Choisissez un fichier PDF", type=["pdf"])
+
+# --- Sélection des pages ---
+col1, col2 = st.columns(2)
+start_page = col1.number_input("Page de début (numérotation humaine)", min_value=1, value=2)
+end_page = col2.number_input("Page de fin (numérotation humaine)", min_value=1, value=7)
+
+# --- Regex principaux ---
+param_L1_regex = re.compile(r'^([A-Z0-9][A-Z0-9\-\+#/%\.\(\)]{0,30}?)\s+L1\b(.*)$')
+level_regex = re.compile(r'^(L[23])\b(.*)$')
+
+def find_cv_in_tokens(tokens, raw_tokens):
+    for i in range(len(tokens)-1):
+        if ('.' in raw_tokens[i] and re.match(r'^\d+$', raw_tokens[i+1])):
+            return float(tokens[i])
+        if re.match(r'^\d+(\.\d+)?$', raw_tokens[i]) and re.match(r'^\d+$', raw_tokens[i+1]):
+            val = float(tokens[i])
+            if val < 50:
+                return val
+    return None
+
+def extract_cv_from_pdf(file_bytes: bytes, start_page: int, end_page: int) -> pd.DataFrame:
+    results = []
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        lines = []
+        for p_idx in range(start_page-1, min(end_page, len(pdf))):
+            page = pdf.pages[p_idx]
+            text = page.extract_text() or ""
+            for li, l in enumerate(text.splitlines()):
+                lines.append(l.strip())
+
+    current_param = None
+    for idx, line in enumerate(lines):
+        # PARAM L1
+        m1 = param_L1_regex.match(line)
+        if m1:
+            current_param = m1.group(1)
+            rest = m1.group(2)
+            raw_nums = re.findall(r'[-+]?\d+\.\d+|[-+]?\d+', rest)
+            nums = [n.replace('+','') for n in raw_nums]
+            cv = find_cv_in_tokens(nums, raw_nums)
+            if cv is not None:
+                results.append({"Parameter": current_param, "Level": "L1", "CV%": cv})
+            continue
+
+        # L2/L3
+        m2 = level_regex.match(line)
+        if m2 and current_param:
+            level = m2.group(1)
+            rest = m2.group(2)
+            raw_nums = re.findall(r'[-+]?\d+\.\d+|[-+]?\d+', rest)
+            nums = [n.replace('+','') for n in raw_nums]
+            cv = find_cv_in_tokens(nums, raw_nums)
+            if cv is not None:
+                results.append({"Parameter": current_param, "Level": level, "CV%": cv})
+            continue
+
+        # Param sur une ligne + '%' sur la suivante + L1 plus loin
+        if re.match(r'^[A-Z0-9\-\+#]{1,20}$', line):
+            if idx+1 < len(lines) and lines[idx+1] == '%':
+                for j in range(idx+2, min(len(lines), idx+10)):
+                    if lines[j].startswith("L1"):
+                        current_param = line + '%'
+                        raw_nums = re.findall(r'[-+]?\d+\.\d+|[-+]?\d+', lines[j])
+                        nums = [n.replace('+','') for n in raw_nums]
+                        cv = find_cv_in_tokens(nums, raw_nums)
+                        if cv is not None:
+                            results.append({"Parameter": current_param, "Level": "L1", "CV%": cv})
+                        break
+
+    df = pd.DataFrame(results).drop_duplicates().reset_index(drop=True)
+    return df
+
+# --- Traitement ---
+if uploaded_file is not None:
+    st.info("📑 Traitement en cours...")
+    df = extract_cv_from_pdf(uploaded_file.read(), start_page, end_page)
+
+    if not df.empty:
+        st.success(f"{len(df)} enregistrements extraits ✅")
+        st.dataframe(df, use_container_width=True)
+
+        # Boutons de téléchargement
+        csv_bytes = df.to_csv(index=False, sep=';').encode('utf-8')
+        xlsx_bytes = io.BytesIO()
+        df.to_excel(xlsx_bytes, index=False)
+        xlsx_bytes.seek(0)
+
+        col1, col2 = st.columns(2)
+        col1.download_button("💾 Télécharger CSV", csv_bytes, "extraction_cv.csv", "text/csv")
+        col2.download_button("📊 Télécharger Excel", xlsx_bytes, "extraction_cv.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    else:
+        st.warning("⚠️ Aucune donnée extraite sur la plage de pages spécifiée.")
