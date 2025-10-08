@@ -4,3 +4,4 @@ numpy
 plotly.express
 openpyxl
 pdfplumber
+reportlab

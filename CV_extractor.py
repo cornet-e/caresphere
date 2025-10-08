@@ -210,3 +210,97 @@ if uploaded_file is not None:
             xlsx_bytes2.seek(0)
             st.download_button("📊 Télécharger Excel comparatif", xlsx_bytes2, "extraction_cv_comparatif.xlsx",
                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
+import datetime
+
+# --- Bouton génération PDF ---
+if uploaded_file is not None and not df_cv.empty:
+    st.subheader("📄 Génération d'un rapport PDF")
+
+    if st.button("📝 Générer le rapport PDF"):
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        styles = getSampleStyleSheet()
+        story = []
+
+        # --- Titre ---
+        story.append(Paragraph("<b>Rapport d'extraction des CV%</b>", styles['Title']))
+        story.append(Spacer(1, 12))
+        story.append(Paragraph(f"Date de génération : {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}", styles['Normal']))
+        story.append(Spacer(1, 12))
+
+        # --- Informations en-tête ---
+        story.append(Paragraph("<b>Informations du rapport</b>", styles['Heading2']))
+        header_data = [["Champ", "Valeur"]] + [[k, v if v else "—"] for k, v in header_info.items()]
+        t = Table(header_data, hAlign='LEFT')
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 12))
+
+        # --- Tableau CV extraits ---
+        story.append(Paragraph("<b>Tableau des CV extraits</b>", styles['Heading2']))
+        cv_data = [df_cv.columns.tolist()] + df_cv.values.tolist()
+        t2 = Table(cv_data, hAlign='LEFT')
+        t2.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#004080")),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+        ]))
+        story.append(t2)
+        story.append(Spacer(1, 12))
+
+        # --- Tableau comparatif si dispo ---
+        if 'df_merged' in locals() and not df_merged.empty:
+            story.append(Paragraph("<b>Comparaison avec CV de référence</b>", styles['Heading2']))
+
+            merged_columns = df_merged.columns.tolist()
+            merged_rows = df_merged.values.tolist()
+            merged_data = [merged_columns] + merged_rows
+
+            t3 = Table(merged_data, hAlign='LEFT')
+
+            # Styles de base
+            table_style = TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#800000")),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+            ])
+
+            # Repérage de la colonne "Conformité"
+            if "Conformité" in df_merged.columns:
+                conf_idx = df_merged.columns.get_loc("Conformité")
+                # Appliquer un fond rouge aux lignes Non Conforme
+                for i, row in enumerate(merged_rows, start=1):  # +1 car ligne 0 = en-tête
+                    if str(row[conf_idx]).strip().lower() == "non conforme":
+                        table_style.add('BACKGROUND', (0, i), (-1, i), colors.Color(1, 0.8, 0.8))  # rouge clair
+
+            t3.setStyle(table_style)
+            story.append(t3)
+            story.append(Spacer(1, 12))
+
+
+        # --- Construction PDF ---
+        doc.build(story)
+        buffer.seek(0)
+
+        # --- Téléchargement ---
+        st.download_button(
+            label="📥 Télécharger le rapport PDF",
+            data=buffer,
+            file_name="rapport_cv.pdf",
+            mime="application/pdf"
+        )
