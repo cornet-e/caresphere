@@ -67,7 +67,10 @@ start_page = col1.number_input("Page de début (numérotation humaine)", min_val
 end_page = col2.number_input("Page de fin (numérotation humaine)", min_value=1, value=7)
 
 # --- Regex principaux ---
-param_L1_regex = re.compile(r'^([A-Z0-9][A-Z0-9\-\+#/%\.\(\)]{0,30}?)\s+L1\b(.*)$')
+param_L1_regex = re.compile(
+    r'^([A-Za-z0-9][A-Za-z0-9\-\+#/%\.\(\)]{0,30}?)\s+L1\b(.*)$',
+    re.IGNORECASE
+)
 level_regex = re.compile(r'^(L[23])\b(.*)$')
 
 def find_cv_in_tokens(tokens, raw_tokens):
