@@ -1,0 +1,25 @@
+# Ignorer les environnements virtuels
+.venv/
+.vscode/
+
+# Ignorer les fichiers compilés Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignorer les fichiers temporaires et logs
+*.log
+*.tmp
+*.bak
+
+# Ignorer les fichiers de configuration locaux
+*.env
+.env.*
+
+# Ignorer les dossiers de cache de Streamlit
+.streamlit/
+
+# Ignorer les fichiers système
+.DS_Store
+Thumbs.db
